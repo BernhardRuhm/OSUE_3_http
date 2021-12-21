@@ -10,8 +10,8 @@ OBJECTS = client.o
 all: client
 
 client: $(OBJECTS)
-        $(CC) $(FLAGS) -o $@ $^ 
+	$(CC) $(FLAGS) -o $@ $^ 
 client.o: client.c
-         $(CC) $(FLAGS) -c -o $@ $<
+	$(CC) $(FLAGS) -c -o $@ $<
 clean:
 	rm -rf *.o client
