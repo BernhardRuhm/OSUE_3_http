@@ -121,21 +121,21 @@ static void validate_header(FILE *s)
     size_t len = 0;
 
     getline(&line, &len, s);
+    char *copy = line;
+    char *tmp = strsep(&copy, " ");
     
-    char *tmp1 = strsep(&line, " ");
-    char *tmp2 = strsep(&line, " ");
-    int status = strtol(tmp2, &end_ptr, 10);
-
-    if((strcmp(tmp1, "HTTP/1.1") != 0) || (errno == EINVAL))
+    if((strcmp(tmp, "HTTP/1.1") != 0) || (errno == EINVAL))
     {
         fprintf(stderr, "Protocoll error\n");
         free(line);
         exit(2);
     }
-
+    
+    tmp = strsep(&copy, " ");
+    int status = strtol(tmp, &end_ptr, 10);
     if(status != 200)
     {
-        fprintf(stderr, "response status not 200, recieved %d %s\n", status, line);
+        fprintf(stderr, "response status not 200, recieved %d %s\n", status, copy);
         free(line);
         exit(3);
     }
@@ -145,7 +145,8 @@ static void validate_header(FILE *s)
     {
         getline(&line, &len, s);
     }
-    free(tmp1);
+
+    free(line);
 }
 
 static void read_and_write(FILE *s, FILE *f)
@@ -211,8 +212,12 @@ int main(int argc, char **argv)
     }
 
     char *url_wihtout_http = url + 7;
-    char *host = strsep(&url_wihtout_http, ";/?:@=&");
-    char *request = url_wihtout_http;
+    char *host = malloc(strlen(url_wihtout_http));
+    char *request = malloc(strlen(url_wihtout_http));
+    char *tmp = strsep(&url_wihtout_http, ";/?:@=&");
+    strcpy(host, tmp);
+    strcpy(request, url_wihtout_http);
+
     
     if(port == NULL)
         port = DEFAULT_PORT;
@@ -222,14 +227,20 @@ int main(int argc, char **argv)
     {
         error_exit("creating socket failed\n");
     }
+    
+
     FILE *w_file = output_file(request, file, dir);
+
     FILE *sockfile = fdopen(sockfd, "r+");
     send_request(request, host, sockfile);
 
     validate_header(sockfile);
     read_and_write(sockfile, w_file);
+
     fclose(sockfile);
     fclose(w_file);
+    free(host);
+    free(request);
     
     return EXIT_SUCCESS;
 }
