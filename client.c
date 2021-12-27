@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <errno.h>
+#include <stdbool.h>
 
 #define DEFAULT_PORT "http"
 #define DEFAULT_FILE "index.html"
@@ -24,6 +25,61 @@ static void error_exit(char *msg)
     exit(EXIT_FAILURE);
 }
 
+static bool ends_with(char *s, char c)
+{
+    int size = strlen(s);
+    if(size == 0)
+        return true;
+    
+    if(s[size - 1] == '/')
+        return true;
+    
+    return false;
+}
+
+static FILE *output_file(char *request, char *file, char *dir)
+{
+    if((file == NULL) && (dir == NULL))
+        return stdout;
+
+    FILE *f;
+
+    if(file != NULL)
+    {
+        if((f = fopen(file, "w")) == NULL)
+        {
+            fprintf(stderr, "[%s] ERROR: fopen failed : %s\n", file, strerror(errno));
+            exit(EXIT_FAILURE);
+        }
+        return f;
+    }
+
+    if(ends_with(request, '/'))
+    {   
+        strcat(dir, "index.html");
+        if((f = fopen(dir, "w")) == NULL)
+        {
+            fprintf(stderr, "[%s] ERROR: fopen failed : %s\n", dir, strerror(errno));
+            exit(EXIT_FAILURE);
+        }
+    }
+    else
+    {
+        char *tmp =  strrchr(request, '/');
+        if(tmp != NULL)
+            strcat(dir, tmp);
+        else
+            strcat(dir, request);
+        if((f = fopen(dir, "w")) == NULL)
+        {
+            fprintf(stderr, "[%s] ERROR: fopen failes : %s\n", dir, strerror(errno));
+            exit(EXIT_FAILURE);
+        }
+    }
+    return f;
+
+}
+
 static int setup_socket(char *host, char *port)
 {
     struct addrinfo hints, *ai;
@@ -40,7 +96,7 @@ static int setup_socket(char *host, char *port)
     int sockfd = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
     if (sockfd < 0)
     {
-        fprintf(stderr, "socket failed: %d\n", errno);
+        fprintf(stderr, "socket failed: %s\n", strerror(errno));
         return -1;
     }
 
@@ -61,14 +117,35 @@ static void send_request(char *path, char *host, FILE *s)
 static void validate_header(FILE *s)
 {
     char *line = NULL;
+    char *end_ptr;
     size_t len = 0;
 
-    if(getline(&line, &len, s) == -1)
-        error_exit("read from socket failed");
-
+    getline(&line, &len, s);
+    
     char *tmp1 = strsep(&line, " ");
     char *tmp2 = strsep(&line, " ");
+    int status = strtol(tmp2, &end_ptr, 10);
 
+    if((strcmp(tmp1, "HTTP/1.1") != 0) || (errno == EINVAL))
+    {
+        fprintf(stderr, "Protocoll error\n");
+        free(line);
+        exit(2);
+    }
+
+    if(status != 200)
+    {
+        fprintf(stderr, "response status not 200, recieved %d %s\n", status, line);
+        free(line);
+        exit(3);
+    }
+
+    //skip header
+    while (strcmp(line, "\r\n") != 0)
+    {
+        getline(&line, &len, s);
+    }
+    free(tmp1);
 }
 
 static void read_and_write(FILE *s, FILE *f)
@@ -94,8 +171,9 @@ int main(int argc, char **argv)
     int opt_p = 0;
     int opt_o = 0;
     int opt_d = 0;
+    
 
-    while ((c = getopt(argc, argv, "p:o:d")) != -1)
+    while ((c = getopt(argc, argv, "p:o:d:")) != -1)
     {
         switch (c)
         {
@@ -124,29 +202,34 @@ int main(int argc, char **argv)
 
     if((argc - (2 * opt_p) - (2 * opt_o) - (2 * opt_d)) != 2 )
         usage();
-
+      
     char *url = argv[optind];
 
     if(strncmp(url, "http://", 7) != 0)
     {
         error_exit("url must contain http://\n");
     }
+
     char *url_wihtout_http = url + 7;
     char *host = strsep(&url_wihtout_http, ";/?:@=&");
-    char *path = url_wihtout_http;
-   
-    int sockfd = setup_socket(host, DEFAULT_PORT);
+    char *request = url_wihtout_http;
+    
+    if(port == NULL)
+        port = DEFAULT_PORT;
+
+    int sockfd = setup_socket(host, port);
     if(sockfd == -1)
     {
         error_exit("creating socket failed\n");
     }
-
+    FILE *w_file = output_file(request, file, dir);
     FILE *sockfile = fdopen(sockfd, "r+");
-    send_request(path, host, sockfile);
+    send_request(request, host, sockfile);
 
     validate_header(sockfile);
-    //read_and_write(sockfile, stdout);
+    read_and_write(sockfile, w_file);
     fclose(sockfile);
+    fclose(w_file);
     
     return EXIT_SUCCESS;
 }
