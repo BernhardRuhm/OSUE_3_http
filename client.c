@@ -43,25 +43,10 @@ char *myprog;
 **/
 static void usage()
 {
-    fprintf(stderr, "usage %s: %s [-p PORT] [ -o FILE | -d DIR ] URL\n", myprog, myprog);
+    fprintf(stderr, "usage %s: client [-p PORT] [-o FILE | -d DIR] URL\n", myprog);
     exit(EXIT_FAILURE);
 }
-
-/**
-*print error message and exit programm
-*@brief writes an error message to stderr and exits the program
-*@details this function writes a given error message to stderr
-*@param msg message printed to stderr
-*
-**/
-static void error_exit(char *msg)
-{
-    fprintf(stderr, "%s: %s", myprog, msg);
-    exit(EXIT_FAILURE);
-}
-/**
- * @brief extracts hostname and file from url
- * @details this function extracts the hostname and requested file or directory
+URL
  * from the url
  * @param url url given as input
  * @param host hostname
