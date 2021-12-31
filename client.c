@@ -33,7 +33,7 @@
 #define DEFAULT_PORT "http"
 #define DEFAULT_FILE "index.html"
 
-char *myprog;
+char *prog;
 
 /**
 *usage function
@@ -43,11 +43,11 @@ char *myprog;
 **/
 static void usage()
 {
-    fprintf(stderr, "usage %s: client [-p PORT] [-o FILE | -d DIR] URL\n", myprog);
+    fprintf(stderr, "usage %s: client [-p PORT] [-o FILE | -d DIR] URL\n", prog);
     exit(EXIT_FAILURE);
 }
-URL
- * from the url
+/**
+ * @brief extract hostfrom the url
  * @param url url given as input
  * @param host hostname
  * @param request requested file or directory
@@ -259,7 +259,7 @@ static void read_and_write(FILE *s, FILE *f)
  */
 int main(int argc, char **argv)
 {
-    myprog = argv[0];
+    prog = argv[0];
 
     int c;
     char *port = NULL;
@@ -304,7 +304,8 @@ int main(int argc, char **argv)
 
     if(strncmp(url, "http://", 7) != 0)
     {
-        error_exit("url must contain http://\n");
+        fprintf(stderr, "url must contain http://\n");
+        exit(EXIT_FAILURE);
     }
 
     char *host = malloc(strlen(url - 7));
@@ -317,7 +318,10 @@ int main(int argc, char **argv)
     int sockfd = setup_socket(host, port);
 
     if(sockfd == -1)
-        error_exit("creating socket failed\n");
+    {
+        fprintf(stderr, "creating socket failed\n");
+        exit(EXIT_FAILURE);
+    }
     
     FILE *w_file = output_file(request, file, dir);
     FILE *sockfile = fdopen(sockfd, "r+");
