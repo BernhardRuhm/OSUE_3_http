@@ -7,11 +7,13 @@
 #include <unistd.h>
 #include <errno.h>
 #include <stdbool.h>
+#include <signal.h>
 
 #define DEFAULT_PORT "8080"
 #define DEFAULT_INDEX "index.html"
 
 char *prog;
+volatile __sig_atomic_t sig_recv = 0;
 
 /**
  * @brief writes an usage message to stderr and the program exits
@@ -25,6 +27,26 @@ static void usage()
 }
 
 /**
+ * @brief changes value of sig_recv if SIGINT or SIGTERM ar recieved
+ * @param signal recieved signal
+ */
+static void handle_signal(int signal)
+{
+    sig_recv = 1;
+}
+
+/**
+ * @brief sets up the signal handler
+ */
+static void setup_signal_handler()
+{
+    struct sigaction sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_handler = handle_signal;
+    sigaction(SIGINT, &sa, NULL);
+}
+
+/**
  * @brief verifies if directory root is a valid directory
  * @param dir_root directory root
  * @return int 
@@ -35,11 +57,40 @@ static int verify_root(char *dir_root)
 {   
     FILE *f;
     if((f = fopen(dir_root, "r")) == NULL)
-    {
         return -1;
-    }
+    
     fclose(f);
     return 0;
+}
+
+static int setupt_socket(char *port)
+{
+    struct addrinfo hints, *ai;
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+    hints.ai_flags = AI_PASSIVE;
+
+    int res = getaddrinfo(NULL, port, &hints, &ai);
+    if (res != 0)
+    {
+        fprintf(stderr, "getaddrinfo failed: %s\n", gai_strerror(res));
+        return -1;
+    }
+    int sockfd = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
+    if (sockfd < 0)
+    {
+        fprintf(stderr, "socket failed: %s\n", strerror(errno));
+        return -1;
+    }
+
+    if (bind(sockfd, ai->ai_addr, ai->ai_addrlen) < 0)
+    {
+        fprintf(stderr, "bind failed: %s\n", strerror(errno));
+        return -1;
+    }
+    freeaddrinfo(ai);
+    return sockfd;
 }
 
 
@@ -96,6 +147,16 @@ int main(int argc, char **argv)
         exit(EXIT_FAILURE);
     }
 
+//setup socket
+    int sockfd = setupt_socket(port);
 
+    setup_signal_handler();
+
+    while (!sig_recv)
+    {
+        
+    }
+    
+    
     return EXIT_SUCCESS;
 }
