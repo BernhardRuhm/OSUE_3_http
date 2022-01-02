@@ -155,18 +155,21 @@ static int setup_socket(char *host, char *port)
     if (res != 0)
     {
         fprintf(stderr, "getaddrinfo failed: %s\n", gai_strerror(res));
+        freeaddrinfo(ai);
         return -1;
     }
     int sockfd = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
     if (sockfd < 0)
     {
         fprintf(stderr, "socket failed: %s\n", strerror(errno));
+        freeaddrinfo(ai);
         return -1;
     }
 
     if (connect(sockfd, ai->ai_addr, ai->ai_addrlen) < 0)
     {
         fprintf(stderr, "connect failed: %s\n", strerror(errno));
+        freeaddrinfo(ai);
         return -1;
     }
     freeaddrinfo(ai);

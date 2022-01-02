@@ -44,6 +44,7 @@ static void setup_signal_handler()
     memset(&sa, 0, sizeof(sa));
     sa.sa_handler = handle_signal;
     sigaction(SIGINT, &sa, NULL);
+    sigaction(SIGTERM, &sa, NULL);
 }
 
 /**
@@ -75,20 +76,38 @@ static int setupt_socket(char *port)
     if (res != 0)
     {
         fprintf(stderr, "getaddrinfo failed: %s\n", gai_strerror(res));
+        freeaddrinfo(ai);
         return -1;
     }
     int sockfd = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
     if (sockfd < 0)
     {
         fprintf(stderr, "socket failed: %s\n", strerror(errno));
+        freeaddrinfo(ai);
+        return -1;
+    }
+
+    int optval = 1;
+    if(setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval)) < 0)
+    {
+        fprintf(stderr, "setsockopt failed: %s", strerror(errno));
+        freeaddrinfo(ai);
         return -1;
     }
 
     if (bind(sockfd, ai->ai_addr, ai->ai_addrlen) < 0)
     {
         fprintf(stderr, "bind failed: %s\n", strerror(errno));
+        freeaddrinfo(ai);
         return -1;
     }
+
+    if(listen(sockfd, 1) < 0)
+    {
+        fprintf(stderr, "listen failed: %s\n", strerror(errno));
+        return -1;
+    }
+
     freeaddrinfo(ai);
     return sockfd;
 }
@@ -149,14 +168,43 @@ int main(int argc, char **argv)
 
 //setup socket
     int sockfd = setupt_socket(port);
+    if(sockfd == -1)
+    {
+        fprintf(stderr, "setting up socket failed\n");
+        exit(EXIT_FAILURE);
+    }
 
     setup_signal_handler();
 
     while (!sig_recv)
     {
-        
+        int connfd = accept(sockfd, NULL, NULL);
+        if(connfd < 0)
+        {
+            if(errno != EINTR)
+            {
+                fprintf(stderr, "accept failed: %s\n", strerror(errno));
+                exit(EXIT_FAILURE);
+            }
+            //signal recieved
+            continue;
+        }
+
+        FILE *sockfile = fdopen(sockfd, "r+");
+        if(sockfile == NULL)
+        {
+            fprintf(stderr, "opening the socket fd failed: %s", strerror(errno));
+            exit(EXIT_FAILURE);
+        }
+
+        //read request
+
+        //write header + content
+
+       
+
+        fclose(sockfile);
     }
-    
     
     return EXIT_SUCCESS;
 }
