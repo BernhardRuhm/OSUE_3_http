@@ -203,10 +203,11 @@ static int validate_header(FILE *s)
     size_t len = 0;
 
     getline(&line, &len, s);
+    
     char *copy = line;
     char *tmp = strsep(&copy, " ");
     
-    if((strcmp(tmp, "HTTP/1.1") != 0) || (errno == EINVAL))
+    if((strcmp(tmp, "HTTP/1.1") != 0) || (errno == EINVAL)) //correct error handling with strtol!!!
     {
         fprintf(stderr, "Protocoll error\n");
         free(line);
@@ -226,8 +227,8 @@ static int validate_header(FILE *s)
     while (strcmp(line, "\r\n") != 0)
     {
         getline(&line, &len, s);
+        
     }
-
     free(line);
     return 0;
 }
@@ -245,7 +246,7 @@ static void read_and_write(FILE *s, FILE *f)
     while(getline(&line, &len, s) != -1){
         fprintf(f, "%s", line);
     }
-
+    fflush(f);
     free(line);
 }
 
