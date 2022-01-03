@@ -8,6 +8,7 @@
 #include <errno.h>
 #include <stdbool.h>
 #include <signal.h>
+#include <time.h>
 
 #define DEFAULT_PORT "8080"
 #define DEFAULT_INDEX "index.html"
@@ -114,6 +115,167 @@ static int setupt_socket(char *port)
 
 
 /**
+ * @brief Get the time object
+ * 
+ * @return char* 
+ */
+static char *get_time()
+{
+    char *r = malloc(200 * (sizeof(char)));
+    char buf[200];
+    time_t t;
+    struct tm *tmp;
+
+    t = time(NULL);
+    tmp = localtime(&t);
+    if(tmp == NULL)
+    {
+        fprintf(stderr, "localtime failed: %s\n", strerror(errno));
+        free(r);
+        return NULL;
+    }
+
+    if(strftime(buf, sizeof(buf),"Date: %a, %d %h %g %X %Z" , tmp) == 0)
+    {
+        fprintf(stderr, "strftime failed");
+        free(r);
+        return NULL;
+    }
+    strcpy(r, buf);
+    return r;
+}
+
+
+/**
+ * @brief 
+ * 
+ * @param s 
+ * @param code 
+ * @param msg 
+ * @param size 
+ */
+static void send_response_header(FILE *s, int code, char *msg, int size, bool state)
+{   
+    if(state)
+    {
+        char *time = get_time();
+        if(time == NULL)
+            exit(EXIT_FAILURE);
+
+        fprintf(s, "HTTP/1.1 %d %s\n%s \nConten-Length: %d\nConnection: close\n\r\n", code, msg, time, size);
+        free(time);
+    }
+    else
+    {
+        fprintf(s, "HTTP/1.1 %d %s\n", code, msg);
+    }
+    fflush(s);
+}
+
+
+static void skip_header(FILE *s)
+{
+    char *line = NULL;
+    size_t length = 0;
+    do
+    {
+        getline(&line, &length, s);
+    } while (strcmp(line, "\r\n") != 0);
+
+    free(line);
+}
+
+
+/**
+ * @brief 
+ * 
+ */
+static FILE *verify_request(FILE *s, char *path)
+{
+    char *line = NULL;
+    size_t length = 0;
+    int whitespaces = 0;
+
+    getline(&line, &length, s);
+
+    //count whitespaces
+    for(int i = 0; i < strlen(line); i++)
+    {
+        if(line[i] == ' ')
+            whitespaces++;
+    }
+    
+    if(whitespaces != 2)
+    {
+        send_response_header(s, 400, "Bad Request", 0, 0);
+        free(line);
+        return NULL;
+    }
+
+    char *copy = line;
+    char *tmp = strsep(&copy, " ");
+
+    if(strcmp(tmp, "GET") != 0)
+    {   
+        skip_header(s);
+        send_response_header(s, 501, "Not implemented", 0, 0);
+        free(line);
+        return NULL;
+    }
+
+    tmp = strsep(&copy, " ");
+    FILE *f;
+    char *dir = malloc(strlen(path) + strlen(tmp) + 1);
+    strcpy(dir, path);
+    strcat(dir, tmp);
+    if((f = fopen(dir, "r")) == NULL)
+    {   
+        skip_header(s);
+        send_response_header(s, 404, "Not Found", 0, 0);
+        free(line);
+        free(dir);
+        return NULL;
+    }
+
+    if(strcmp(copy, "HTTP/1.1\r\n") != 0)
+    {
+        skip_header(s);
+        send_response_header(s, 400, "Bad Request", 0, 0);
+        fclose(f);
+        free(line);
+        free(dir);
+        return NULL;
+    }
+    
+    skip_header(s);
+    send_response_header(s, 200, "OK", 150, 1);
+
+    free(line);
+    free(dir);
+    return f;
+}
+
+/**
+ * @brief 
+ * 
+ * @param s 
+ * @param w 
+ */
+static void transmit_data(FILE *s, FILE *w)
+{
+    char *line = NULL;
+    size_t length = 0;
+
+    while (getline(&line, &length, w) != -1)
+    {
+        fprintf(s, "%s", line);
+    }
+    fflush(s);
+    free(line);
+}
+
+
+/**
  * @brief 
  * 
  * @param argc 
@@ -189,20 +351,27 @@ int main(int argc, char **argv)
             //signal recieved
             continue;
         }
-
-        FILE *sockfile = fdopen(sockfd, "r+");
+        
+        FILE *sockfile = fdopen(connfd, "r+");
         if(sockfile == NULL)
         {
             fprintf(stderr, "opening the socket fd failed: %s", strerror(errno));
             exit(EXIT_FAILURE);
         }
 
-        //read request
+        //read request and write header to client
+        FILE *request = verify_request(sockfile, dir_root);
+        if(request == NULL)
+        {
+            fclose(sockfile);
+            continue;
+        }
+    
+        //write content
+        transmit_data(sockfile, request);
+        
 
-        //write header + content
-
-       
-
+        fclose(request);
         fclose(sockfile);
     }
     
