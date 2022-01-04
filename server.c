@@ -11,7 +11,7 @@
 #include <time.h>
 
 #define DEFAULT_PORT "8080"
-#define DEFAULT_INDEX "index.html"
+#define DEFAULT_INDEX "test.html"
 
 char *prog;
 volatile __sig_atomic_t sig_recv = 0;
@@ -113,6 +113,23 @@ static int setupt_socket(char *port)
     return sockfd;
 }
 
+/**
+ * @brief 
+ * 
+ * @param s 
+ * @param c 
+ * @return true 
+ * @return false 
+ */
+static bool ends_with(char *s, char c)
+{
+    int size = strlen(s);
+    
+    if(s[size - 1] == '/')
+        return true;
+    
+    return false;
+}
 
 /**
  * @brief Get the time object
@@ -190,7 +207,7 @@ static void skip_header(FILE *s)
  * @brief 
  * 
  */
-static FILE *verify_request(FILE *s, char *path)
+static FILE *verify_request(FILE *s, char *path, char *index)
 {
     char *line = NULL;
     size_t length = 0;
@@ -228,6 +245,11 @@ static FILE *verify_request(FILE *s, char *path)
     char *dir = malloc(strlen(path) + strlen(tmp) + 1);
     strcpy(dir, path);
     strcat(dir, tmp);
+    if(ends_with(dir, '/'))
+    {
+        dir = realloc(dir, strlen(dir) + strlen(index));
+        strcat(dir, index);
+    }
     if((f = fopen(dir, "r")) == NULL)
     {   
         skip_header(s);
@@ -360,7 +382,7 @@ int main(int argc, char **argv)
         }
 
         //read request and write header to client
-        FILE *request = verify_request(sockfile, dir_root);
+        FILE *request = verify_request(sockfile, dir_root, index);
         if(request == NULL)
         {
             fclose(sockfile);
@@ -377,3 +399,11 @@ int main(int argc, char **argv)
     
     return EXIT_SUCCESS;
 }
+
+
+/*
+TODO:
+    -perror
+    -testing
+    -code review
+*/
