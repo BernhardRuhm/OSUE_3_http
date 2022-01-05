@@ -33,7 +33,15 @@
 #define DEFAULT_PORT "http"
 #define DEFAULT_FILE "index.html"
 
+#define ERROR(m, e) \
+    {               \
+        perror(m);  \
+        exit(e);    \
+    }
+
 char *prog;
+
+
 
 /**
 *usage function
@@ -46,6 +54,52 @@ static void usage()
     fprintf(stderr, "usage %s: client [-p PORT] [-o FILE | -d DIR] URL\n", prog);
     exit(EXIT_FAILURE);
 }
+
+
+static void argument_handling(int argc, char **argv, char **port, char **file, char **dir)
+{
+    int c;
+
+    int opt_p = 0;
+    int opt_o = 0;
+    int opt_d = 0;
+
+    while ((c = getopt(argc, argv, "p:o:d:")) != -1)
+    {
+        switch (c)
+        {
+        case 'p':
+            *port = optarg;
+            opt_p++;
+            break;
+
+        case 'o':
+            *file = optarg;
+            opt_o++;
+            break;
+
+        case 'd':
+            *dir = optarg;
+            opt_d++;
+            break;
+
+        case '?':
+            usage();
+        }
+    }
+
+    if ((opt_p > 1) || ((opt_o >= 1) && (opt_d >= 1)))
+        usage();
+
+    if ((argc - (2 * opt_p) - (2 * opt_o) - (2 * opt_d)) != 2)
+        usage();
+
+     if (*port == NULL)
+        *port = DEFAULT_PORT;
+
+}
+
+
 /**
  * @brief extract hostfrom the url
  * @param url url given as input
@@ -58,12 +112,12 @@ static void extract_host_request(char *url, char *host, char *request)
     char *tmp = strsep(&url_wihtout_http, ";/?:@=&");
 
     strcpy(host, tmp);
-
-    if(url_wihtout_http == NULL)
+    //url_without_http is NULL if host doesnt end with '/'
+    //e.g: http://nonhttps.com
+    if (url_wihtout_http == NULL)
         strcpy(request, "");
     else
         strcpy(request, url_wihtout_http);
-    
 }
 /**
  * @brief checks last char of a string
@@ -74,16 +128,16 @@ static void extract_host_request(char *url, char *host, char *request)
  * @return true if last char equals c or string ist empty
  * @return false otherwise
  */
-static bool ends_with(char *s, char c)
+static bool is_file(char *s)
 {
     int size = strlen(s);
-    if(size == 0)
-        return true;
-    
-    if(s[size - 1] == '/')
-        return true;
-    
-    return false;
+    if (size == 0)
+        return false;
+
+    if (s[size - 1] == '/')
+        return false;
+
+    return true;
 }
 
 /**
@@ -96,46 +150,41 @@ static bool ends_with(char *s, char c)
  */
 static FILE *output_file(char *request, char *file, char *dir)
 {
-    if((file == NULL) && (dir == NULL))
+    if ((file == NULL) && (dir == NULL))
         return stdout;
 
     FILE *f;
 
-    if(file != NULL)
-    {
-        if((f = fopen(file, "w")) == NULL)
-        {
-            fprintf(stderr, "[%s] ERROR: fopen failed : %s\n", file, strerror(errno));
-            exit(EXIT_FAILURE);
-        }
-        return f;
-    }
-
-    if(ends_with(request, '/'))
-    {   
-        strcat(dir, "index.html");
-        if((f = fopen(dir, "w")) == NULL)
-        {
-            fprintf(stderr, "[%s] ERROR: fopen failed : %s\n", dir, strerror(errno));
-            exit(EXIT_FAILURE);
-        }
+    if (file != NULL)
+    { //option -o was given
+        f = fopen(file, "w");
     }
     else
-    {
-        char *tmp =  strrchr(request, '/');
-
-        if(tmp != NULL)
-            strcat(dir, tmp);
-        else
-            strcat(dir, request);
-        if((f = fopen(dir, "w")) == NULL)
+    {//option -d was given
+        if(is_file(dir))
         {
-            fprintf(stderr, "[%s] ERROR: fopen failes : %s\n", dir, strerror(errno));
-            exit(EXIT_FAILURE);
+            strcat(dir, "/");
+        }
+        if (!is_file(request))
+        {
+            strcat(dir, "index.html");
+            f = fopen(dir, "w");
+            
+        }
+        else
+        {
+            char *tmp = strrchr(request, '/');
+            //tmp is NULL if file follows right after host
+            //e.g.: http://nonhttps.com/index.html
+            if (tmp != NULL)
+                strcat(dir, tmp);
+            else
+                strcat(dir, request);
+
+            f = fopen(dir, "w");
         }
     }
     return f;
-
 }
 
 /**
@@ -155,9 +204,9 @@ static int setup_socket(char *host, char *port)
     if (res != 0)
     {
         fprintf(stderr, "getaddrinfo failed: %s\n", gai_strerror(res));
-        freeaddrinfo(ai);
         return -1;
     }
+
     int sockfd = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
     if (sockfd < 0)
     {
@@ -172,6 +221,7 @@ static int setup_socket(char *host, char *port)
         freeaddrinfo(ai);
         return -1;
     }
+
     freeaddrinfo(ai);
     return sockfd;
 }
@@ -184,7 +234,7 @@ static int setup_socket(char *host, char *port)
  */
 static void send_request(char *request, char *host, FILE *s)
 {
-    fprintf(s,"GET /%s HTTP/1.1\r\nHost: %s\r\nConnection: close\r\n\r\n", request, host);
+    fprintf(s, "GET /%s HTTP/1.1\r\nHost: %s\r\nConnection: close\r\n\r\n", request, host);
     fflush(s);
 }
 
@@ -203,20 +253,20 @@ static int validate_header(FILE *s)
     size_t len = 0;
 
     getline(&line, &len, s);
-    
+
     char *copy = line;
     char *tmp = strsep(&copy, " ");
-    
-    if((strcmp(tmp, "HTTP/1.1") != 0) || (errno == EINVAL)) //correct error handling with strtol!!!
+    char *tmp2 = strsep(&copy, " ");
+    int status = strtol(tmp2, &end_ptr, 10);
+
+    if ((strcmp(tmp, "HTTP/1.1") != 0) || (errno == EINVAL))
     {
         fprintf(stderr, "Protocoll error\n");
         free(line);
         return 2;
     }
-    
-    tmp = strsep(&copy, " ");
-    int status = strtol(tmp, &end_ptr, 10);
-    if(status != 200)
+
+    if (status != 200)
     {
         fprintf(stderr, "response status not 200, recieved %d %s\n", status, copy);
         free(line);
@@ -227,7 +277,6 @@ static int validate_header(FILE *s)
     while (strcmp(line, "\r\n") != 0)
     {
         getline(&line, &len, s);
-        
     }
     free(line);
     return 0;
@@ -238,12 +287,13 @@ static int validate_header(FILE *s)
  * @param s file pointer of socket
  * @param f file pointer to write data
  */
-static void read_and_write(FILE *s, FILE *f)
+static void transmit_content(FILE *s, FILE *f)
 {
     char *line = NULL;
     size_t len = 0;
 
-    while(getline(&line, &len, s) != -1){
+    while (getline(&line, &len, s) != -1)
+    {
         fprintf(f, "%s", line);
     }
     fflush(f);
@@ -265,83 +315,66 @@ int main(int argc, char **argv)
 {
     prog = argv[0];
 
-    int c;
     char *port = NULL;
     char *file = NULL;
     char *dir = NULL;
-    int opt_p = 0;
-    int opt_o = 0;
-    int opt_d = 0;
-    
 
-    while ((c = getopt(argc, argv, "p:o:d:")) != -1)
-    {
-        switch (c)
-        {
-        case 'p':
-            port = optarg;
-            opt_p++;
-            break;
+    argument_handling(argc, argv, &port, &file, &dir);
 
-        case 'o':
-            file = optarg;
-            opt_o++;
-            break;
-
-        case 'd':
-            dir = optarg;
-            opt_d++;
-            break;
-
-        case '?':
-            usage();
-        }
-    }
-
-    if((opt_p > 1) || ((opt_o >= 1) && (opt_d >= 1)))
-        usage();
-
-    if((argc - (2 * opt_p) - (2 * opt_o) - (2 * opt_d)) != 2 )
-        usage();
-      
     char *url = argv[optind];
 
-    if(strncmp(url, "http://", 7) != 0)
+    if (strncmp(url, "http://", 7) != 0)
     {
         fprintf(stderr, "url must contain http://\n");
         exit(EXIT_FAILURE);
     }
 
-    char *host = malloc(strlen(url - 7));
-    char *request = malloc(strlen(url - 7));
+    char *host = malloc(strlen(url));
+    char *request = malloc(strlen(url));
     extract_host_request(url, host, request);
-    
-    if(port == NULL)
-        port = DEFAULT_PORT;
 
     int sockfd = setup_socket(host, port);
-
-    if(sockfd == -1)
+    if (sockfd == -1)
     {
+        free(host);
+        free(request);
         fprintf(stderr, "creating socket failed\n");
         exit(EXIT_FAILURE);
     }
-    
+
     FILE *w_file = output_file(request, file, dir);
+    if(w_file == NULL)
+    {   
+        free(host);
+        free(request);
+        ERROR("opening output file failed", EXIT_FAILURE);
+    }
+
     FILE *sockfile = fdopen(sockfd, "r+");
+    if(sockfile == NULL)
+    {   
+        free(host);
+        free(request);
+        fclose(w_file);
+        ERROR("opening socket fd failed", EXIT_FAILURE);
+    }
 
     send_request(request, host, sockfile);
 
     int h = validate_header(sockfile);
-    if(h != 0)
+    if (h != 0)
+    {
+        free(host);
+        free(request);
         exit(h);
+    }
 
-    read_and_write(sockfile, w_file);
+    transmit_content(sockfile, w_file);
 
     fclose(sockfile);
     fclose(w_file);
     free(host);
     free(request);
-    
+
     return EXIT_SUCCESS;
 }
