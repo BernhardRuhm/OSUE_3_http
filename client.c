@@ -12,12 +12,6 @@
 *SYNOPSIS
 *client [-p PORT] [ -o FILE | -d DIR ] URL
 *
-*-p: specify port to connect with server, on default http
-*-o: specify file to write requested contet
-*-d: specify a directory to write requested content, file name equals name of requested file
-*    if a directory was requested, the file name is "index.html"
-*if neither -d or -o are given as input, transmitted data ist written to stdout
-*
 **/
 
 #include <stdio.h>
@@ -55,11 +49,24 @@ static void usage()
     exit(EXIT_FAILURE);
 }
 
+/**
+ * @brief parsing arguments
+ *-p: specify port to connect with server, on default http
+ *-o: specify file to write requested contet
+ *-d: specify a directory to write requested content, file name equals name of requested file
+ *    if a directory was requested, the file name is "index.html"
+ *if neither -d or -o are given as input, transmitted data ist written to stdout
+ * 
+ * @param argc argument counter
+ * @param argv argument vector
+ * @param port specified port
+ * @param file specified filename
+ * @param dir specified directory
+ */
 
 static void argument_handling(int argc, char **argv, char **port, char **file, char **dir)
 {
     int c;
-
     int opt_p = 0;
     int opt_o = 0;
     int opt_d = 0;
@@ -120,13 +127,11 @@ static void extract_host_request(char *url, char *host, char *request)
         strcpy(request, url_wihtout_http);
 }
 /**
- * @brief checks last char of a string
- * @details function verifies, if last char of a string equals a specfified char
- * or if the string is empty
- * @param s string
- * @param c char
- * @return true if last char equals c or string ist empty
- * @return false otherwise
+ * @brief checks if string equals file or directory
+ * 
+ * @param s string to verify
+ * @return true 
+ * @return false 
  */
 static bool is_file(char *s)
 {
@@ -146,7 +151,7 @@ static bool is_file(char *s)
  * @param request requested file or directory in url
  * @param file file from option -o
  * @param dir directory from option -d
- * @return FILE* created file pointer or stdout
+ * @return FILE* created file pointer, stdout or NULL on error
  */
 static FILE *output_file(char *request, char *file, char *dir)
 {
@@ -162,14 +167,13 @@ static FILE *output_file(char *request, char *file, char *dir)
     else
     {//option -d was given
         if(is_file(dir))
-        {
+        {   //dir doesnt end with '/'
             strcat(dir, "/");
         }
         if (!is_file(request))
         {
             strcat(dir, "index.html");
             f = fopen(dir, "w");
-            
         }
         else
         {
