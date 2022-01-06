@@ -2,7 +2,7 @@
 *
 *@file client.c
 *@author Bernhard Ruhm
-*@date last edit 12-28-2021
+*@date last edit 01-06-2021
 *@brief client program to communicate with http server
 *@details This program implements a client that communicates with a http server.
 *The client takes an URL as input and connects to the corresponding host. After the connection
@@ -51,6 +51,7 @@ static void usage()
 
 /**
  * @brief parsing arguments
+ * @details
  *-p: specify port to connect with server, on default http
  *-o: specify file to write requested contet
  *-d: specify a directory to write requested content, file name equals name of requested file
@@ -128,7 +129,6 @@ static void extract_host_request(char *url, char *host, char *request)
 }
 /**
  * @brief checks if string equals file or directory
- * 
  * @param s string to verify
  * @return true 
  * @return false 
@@ -192,7 +192,7 @@ static FILE *output_file(char *request, char *file, char *dir)
 }
 
 /**
- * @brief Set the up socket object
+ * @brief Set the up socket 
  * @param host host from url
  * @param port port from option -p or default port http
  * @return int socket file descriptor
@@ -256,7 +256,12 @@ static int validate_header(FILE *s)
     char *end_ptr;
     size_t len = 0;
 
-    getline(&line, &len, s);
+    if(getline(&line, &len, s) == -1)
+    {
+        fprintf(stderr, "reading header failed");
+        free(line);
+        return -1;
+    }
 
     char *copy = line;
     char *tmp = strsep(&copy, " ");
@@ -370,6 +375,8 @@ int main(int argc, char **argv)
     {
         free(host);
         free(request);
+        fclose(sockfile);
+        fclose(w_file);
         exit(h);
     }
 

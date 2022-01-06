@@ -1,3 +1,19 @@
+/**
+*
+*@file server.c
+*@author Bernhard Ruhm
+*@date last edit 01-06-2021
+*@brief server program to simulate http server
+*@details This program sets up a http server. It takes a directory as input, which is
+*set to be the root directory of the server. After the socket has been set up, it waits 
+*for clients to connect. After a successfull connection, the server sends a corresponding 
+*response header plus the requested file. If the connection fails, the server sends a error
+*code.
+*
+*SYNOPSIS
+*server [-p PORT] [-i INDEX] DOC_ROOT
+*
+**/
 #include <stdio.h>
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -11,7 +27,13 @@
 #include <time.h>
 
 #define DEFAULT_PORT "8080"
-#define DEFAULT_INDEX "test.html"
+#define DEFAULT_INDEX "index.html"
+
+#define ERROR(m, e) \
+    {               \
+        perror(m);  \
+        exit(e);    \
+    }
 
 char *prog;
 volatile __sig_atomic_t sig_recv = 0;
@@ -25,6 +47,51 @@ static void usage()
 {
     fprintf(stderr, "usage %s: server [-p PORT] [-i INDEX] DOC_ROOT\n", prog);
     exit(EXIT_FAILURE);
+}
+
+/**
+ * @brief parsing arguments
+ * @details
+ * -p: port to set up connection
+ * -i: filename to transmit, if directory was requested
+ * @param argc argument counter
+ * @param argv argument vector
+ * @param port specified port
+ * @param index specified index
+ */
+static void argument_handling(int argc, char **argv, char **port, char **index)
+{
+    int c;
+    int opt_p = 0;
+    int opt_i = 0;
+
+    while ((c = getopt(argc, argv, "p:i:")) != -1)
+    {
+        switch (c)
+        {
+        case 'p':
+            opt_p++;
+            *port = optarg;
+            break;
+        case 'i':
+            opt_i++;
+            *index = optarg;
+            break;
+        case '?':
+            usage();
+        }
+    }
+
+    if ((opt_p > 1) || (opt_i > 1))
+        usage();
+
+    if ((argc - (2 * opt_p) - (2 * opt_i)) != 2)
+        usage();
+
+    if (*port == NULL)
+        *port = DEFAULT_PORT;
+    if (*index == NULL)
+        *index = DEFAULT_INDEX;
 }
 
 /**
@@ -56,14 +123,19 @@ static void setup_signal_handler()
  *           0 on success      
  */
 static int verify_root(char *dir_root)
-{   
+{
     FILE *f;
-    if((f = fopen(dir_root, "r")) == NULL)
+    if ((f = fopen(dir_root, "r")) == NULL)
         return -1;
-    
+
     fclose(f);
     return 0;
 }
+/**
+ * @brief Set the up socket 
+ * @param port port from option -p or default port http
+ * @return int socket file descriptor
+ */
 
 static int setupt_socket(char *port)
 {
@@ -89,7 +161,7 @@ static int setupt_socket(char *port)
     }
 
     int optval = 1;
-    if(setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval)) < 0)
+    if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval)) < 0)
     {
         fprintf(stderr, "setsockopt failed: %s", strerror(errno));
         freeaddrinfo(ai);
@@ -103,9 +175,10 @@ static int setupt_socket(char *port)
         return -1;
     }
 
-    if(listen(sockfd, 1) < 0)
+    if (listen(sockfd, 1) < 0)
     {
         fprintf(stderr, "listen failed: %s\n", strerror(errno));
+        freeaddrinfo(ai);
         return -1;
     }
 
@@ -114,83 +187,110 @@ static int setupt_socket(char *port)
 }
 
 /**
- * @brief 
- * 
- * @param s 
- * @param c 
+ * @brief checks if string equals file or directory
+ * @param s string to verify
  * @return true 
  * @return false 
  */
-static bool ends_with(char *s, char c)
+static bool is_file(char *s)
 {
     int size = strlen(s);
-    
-    if(s[size - 1] == '/')
-        return true;
-    
-    return false;
+    if (size == 0)
+        return false;
+
+    if (s[size - 1] == '/')
+        return false;
+
+    return true;
 }
 
 /**
- * @brief Get the time object
+ * @brief get the number of bytes from a file
+ * @param f file
+ * @return long -1 on error, else size
+ */
+static long get_file_size(FILE *f)
+{
+    if(fseek(f, 0, SEEK_END) == -1)
+        return -1;
+    long size = ftell(f);
+    if(fseek(f, 0, SEEK_SET) == -1)
+        return -1;
+    return size;
+}
+
+/**
+ * @brief Get the time
  * 
- * @return char* 
+ * @return char* time formatted string
+ *         NULL on error
  */
 static char *get_time()
 {
-    char *r = malloc(200 * (sizeof(char)));
-    char buf[200];
+    char buf[50];
     time_t t;
     struct tm *tmp;
 
     t = time(NULL);
     tmp = localtime(&t);
-    if(tmp == NULL)
+    if (tmp == NULL)
     {
         fprintf(stderr, "localtime failed: %s\n", strerror(errno));
-        free(r);
         return NULL;
     }
 
-    if(strftime(buf, sizeof(buf),"Date: %a, %d %h %g %X %Z" , tmp) == 0)
+    if (strftime(buf, sizeof(buf), "Date: %a, %d %h %g %X %Z", tmp) == 0)
     {
         fprintf(stderr, "strftime failed");
-        free(r);
         return NULL;
     }
+    char *r = malloc(strlen(buf) + 1);
     strcpy(r, buf);
     return r;
 }
 
-
 /**
- * @brief 
- * 
- * @param s 
- * @param code 
- * @param msg 
- * @param size 
+ * @brief sends header to client
+ * @details on successfull request, send Header:
+ *  HTTP/1.1 200 OK
+ *  Date: date
+ *  Content-Length: number of bytes
+ *  Connection: close
+ * @param s socket file pointer
+ * @param code response code
+ * @param msg response message
+ * @param size file size
  */
-static void send_response_header(FILE *s, int code, char *msg, int size, bool state)
-{   
-    if(state)
-    {
-        char *time = get_time();
-        if(time == NULL)
-            exit(EXIT_FAILURE);
+static void send_response_header(FILE *s, int code, char *msg, long size)
+{
+    char *time = get_time();
+    if (time == NULL)
+        exit(EXIT_FAILURE);
 
-        fprintf(s, "HTTP/1.1 %d %s\n%s \nConten-Length: %d\nConnection: close\n\r\n", code, msg, time, size);
-        free(time);
-    }
-    else
-    {
-        fprintf(s, "HTTP/1.1 %d %s\n", code, msg);
-    }
+    fprintf(s, "HTTP/1.1 %d %s\r\n%s \r\nContent-Length: %ld\r\nConnection: close\r\n\r\n", code, msg, time, size);
+    free(time);
     fflush(s);
 }
 
+/**
+ * @brief send header to client
+ * @details on a failed request, send error code and message to client
+ * @param s socket file pointer
+ * @param code error code
+ * @param msg error message
+ */
+static void send_error_code(FILE *s, int code, char *msg)
+{
+    fprintf(s, "HTTP/1.1 %d %s\r\n", code, msg);
+    fflush(s);
+}
 
-static void skip_header(FILE *s)
+/**
+ * @brief skip remaining content of request
+ * 
+ * @param s socket file pointer
+ */
+static void skip_request(FILE *s)
 {
     char *line = NULL;
     size_t length = 0;
@@ -202,10 +302,16 @@ static void skip_header(FILE *s)
     free(line);
 }
 
-
 /**
- * @brief 
- * 
+ * @brief verifies request
+ * @details verifies a clients request. Request must contain GET,
+ * the requested file or dir and HTTP/1.1. In either successfull or failed request,
+ * the server sends a corresponding response header.
+ * @param s socket file pointer
+ * @param path path dor root dir
+ * @param index name of index file
+ * @return FILE* file pointer of requested file
+ *         NULL on error
  */
 static FILE *verify_request(FILE *s, char *path, char *index)
 {
@@ -216,15 +322,15 @@ static FILE *verify_request(FILE *s, char *path, char *index)
     getline(&line, &length, s);
 
     //count whitespaces
-    for(int i = 0; i < strlen(line); i++)
+    for (int i = 0; i < strlen(line); i++)
     {
-        if(line[i] == ' ')
+        if (line[i] == ' ')
             whitespaces++;
     }
-    
-    if(whitespaces != 2)
+
+    if (whitespaces != 2)
     {
-        send_response_header(s, 400, "Bad Request", 0, 0);
+        send_error_code(s, 400, "Bad Request");
         free(line);
         return NULL;
     }
@@ -232,10 +338,10 @@ static FILE *verify_request(FILE *s, char *path, char *index)
     char *copy = line;
     char *tmp = strsep(&copy, " ");
 
-    if(strcmp(tmp, "GET") != 0)
-    {   
-        skip_header(s);
-        send_response_header(s, 501, "Not implemented", 0, 0);
+    if (strcmp(tmp, "GET") != 0)
+    {
+        skip_request(s);
+        send_error_code(s, 501, "Not implemented");
         free(line);
         return NULL;
     }
@@ -245,32 +351,37 @@ static FILE *verify_request(FILE *s, char *path, char *index)
     char *dir = malloc(strlen(path) + strlen(tmp) + 1);
     strcpy(dir, path);
     strcat(dir, tmp);
-    if(ends_with(dir, '/'))
+
+    if (!is_file(dir))
     {
-        dir = realloc(dir, strlen(dir) + strlen(index));
+        dir = realloc(dir, strlen(dir) + strlen(index) + 1);
         strcat(dir, index);
     }
-    if((f = fopen(dir, "r")) == NULL)
-    {   
-        skip_header(s);
-        send_response_header(s, 404, "Not Found", 0, 0);
+    if ((f = fopen(dir, "r")) == NULL)
+    {
+        skip_request(s);
+        send_error_code(s, 404, "Not Found");
+        fflush(stdout);
         free(line);
         free(dir);
         return NULL;
     }
 
-    if(strcmp(copy, "HTTP/1.1\r\n") != 0)
+    if (strcmp(copy, "HTTP/1.1\r\n") != 0)
     {
-        skip_header(s);
-        send_response_header(s, 400, "Bad Request", 0, 0);
+        skip_request(s);
+        send_error_code(s, 400, "Bad Request");
         fclose(f);
         free(line);
         free(dir);
         return NULL;
     }
-    
-    skip_header(s);
-    send_response_header(s, 200, "OK", 150, 1);
+
+    skip_request(s);
+    long size =  get_file_size(f);
+    if(size == -1)
+        ERROR("get_file_size failed", EXIT_FAILURE);
+    send_response_header(s, 200, "OK", size);
 
     free(line);
     free(dir);
@@ -278,10 +389,10 @@ static FILE *verify_request(FILE *s, char *path, char *index)
 }
 
 /**
- * @brief 
+ * @brief transmit content of requested file
  * 
- * @param s 
- * @param w 
+ * @param s socket file pointer
+ * @param w request file pointer
  */
 static void transmit_data(FILE *s, FILE *w)
 {
@@ -296,63 +407,32 @@ static void transmit_data(FILE *s, FILE *w)
     free(line);
 }
 
-
 /**
- * @brief 
- * 
- * @param argc 
- * @param argv 
- * @return int 
+ * @brief server http connection
+ * @details The main function provides the main functionality of this program,
+ * by calling the functions argument_handling, verify_request, transmit_data and
+ * setup_signal_handler
+ * @param argc argument count
+ * @param argv argument vector
+ * @return int EXIT_SUCCESS on successfull termination
+ *             EXIT_FAILURE on failed termination
  */
 int main(int argc, char **argv)
 {
     prog = argv[0];
 
-//argument handling
-    int c;
     char *port = NULL;
     char *index = NULL;
-    int opt_p = 0;
-    int opt_i = 0;
-    
-    while((c = getopt(argc, argv, "p:i:")) != -1)
-    {
-        switch (c)
-        {
-        case 'p':
-            opt_p++;
-            port = optarg;
-            break;
-        case 'i':
-            opt_i++;
-            index = optarg;
-            break;
-        case '?':
-            usage();
-        }
-    }
-
-    if((opt_p > 1) || (opt_i > 1))
-        usage();
-
-    if((argc - (2 * opt_p) - (2 *opt_i)) != 2)
-        usage();
-    if(port == NULL)
-        port = DEFAULT_PORT;
-    if(index == NULL)
-        index = DEFAULT_INDEX;
+    argument_handling(argc, argv, &port, &index);
     
     char *dir_root = argv[optind];
-    
-    if(verify_root(dir_root) == -1)
-    {
-        fprintf(stderr, "fopen failed: %s\n", strerror(errno));
-        exit(EXIT_FAILURE);
-    }
 
-//setup socket
+    if (verify_root(dir_root) == -1)
+        ERROR("opening root dir failed", EXIT_FAILURE);
+
+    //setup socket
     int sockfd = setupt_socket(port);
-    if(sockfd == -1)
+    if (sockfd == -1)
     {
         fprintf(stderr, "setting up socket failed\n");
         exit(EXIT_FAILURE);
@@ -363,47 +443,30 @@ int main(int argc, char **argv)
     while (!sig_recv)
     {
         int connfd = accept(sockfd, NULL, NULL);
-        if(connfd < 0)
-        {
-            if(errno != EINTR)
-            {
-                fprintf(stderr, "accept failed: %s\n", strerror(errno));
-                exit(EXIT_FAILURE);
-            }
+        if (connfd < 0)
+        {   //other error
+            if (errno != EINTR)
+                ERROR("accept failed", EXIT_FAILURE);
+
             //signal recieved
             continue;
         }
-        
-        FILE *sockfile = fdopen(connfd, "r+");
-        if(sockfile == NULL)
-        {
-            fprintf(stderr, "opening the socket fd failed: %s", strerror(errno));
-            exit(EXIT_FAILURE);
-        }
 
-        //read request and write header to client
+        FILE *sockfile = fdopen(connfd, "r+");
+        if (sockfile == NULL)
+            ERROR("opening the socket fd failed", EXIT_FAILURE);
+
         FILE *request = verify_request(sockfile, dir_root, index);
-        if(request == NULL)
+        if (request == NULL)
         {
             fclose(sockfile);
             continue;
         }
-    
-        //write content
         transmit_data(sockfile, request);
-        
 
         fclose(request);
         fclose(sockfile);
     }
-    
+
     return EXIT_SUCCESS;
 }
-
-
-/*
-TODO:
-    -perror
-    -testing
-    -code review
-*/
